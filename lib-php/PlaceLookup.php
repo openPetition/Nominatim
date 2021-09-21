@@ -167,6 +167,28 @@ class PlaceLookup
         return empty($aResults) ? null : reset($aResults);
     }
 
+    public function lookupCountryCode($sCountryCode)
+    {
+        $sSQL = "
+            SELECT place_id
+            FROM placex
+            WHERE country_code = :countryCode
+            AND admin_level = 2
+            AND class = 'boundary'
+            AND type = 'administrative'
+            AND osm_type = 'R'
+        ";
+        $iPlaceID = $this->oDB->getOne($sSQL, array(':countryCode' => $sCountryCode));
+
+        if (!$iPlaceID) {
+            return null;
+        }
+
+        $aResults = $this->lookup(array($iPlaceID => new Result($iPlaceID)));
+
+        return empty($aResults) ? null : reset($aResults);
+    }
+
     public function lookup($aResults, $iMinRank = 0, $iMaxRank = 30)
     {
         Debug::newFunction('Place lookup');
