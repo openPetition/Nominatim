@@ -104,11 +104,13 @@ class Hierarchy
                         TO_TIMESTAMP(EXTRACT(epoch FROM p2.indexed_date)),
                         'YYYY-MM-DD\"T\"HH:MI:SS+00:00'
                     ) AS indexed_date
-                FROM placex AS p1, placex AS p2, place_addressline AS pa
+                FROM place_addressline AS pa
+                JOIN placex AS p1
+                    ON pa.address_place_id = p1.place_id
+                JOIN placex AS p2
+                    ON pa.place_id = p2.place_id
                 WHERE p1.osm_id = :osmId
                 AND p1.osm_type = 'R'
-                AND pa.address_place_id = p1.place_id
-                AND pa.place_id = p2.place_id
                 AND pa.isaddress
                 AND pa.fromarea
                 AND p2.admin_level = :adminLevel
