@@ -92,6 +92,7 @@ def create_functions(conn, config, sqllib_dir,
 WEBSITE_SCRIPTS = (
     'deletable.php',
     'details.php',
+    'hierarchy.php',
     'lookup.php',
     'polygons.php',
     'reverse.php',
