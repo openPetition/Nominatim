@@ -100,6 +100,7 @@ def create_functions(conn: Connection, config: Configuration,
 WEBSITE_SCRIPTS = (
     'deletable.php',
     'details.php',
+    'hierarchy.php',
     'lookup.php',
     'polygons.php',
     'reverse.php',
