@@ -83,6 +83,7 @@ def create_functions(conn, config, enable_diff_updates=True, enable_debug=False)
 WEBSITE_SCRIPTS = (
     'deletable.php',
     'details.php',
+    'hierarchy.php',
     'lookup.php',
     'polygons.php',
     'reverse.php',

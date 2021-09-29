@@ -1,0 +1,18 @@
+version: "3"
+services:
+  nominatim:
+    image: mediagis/nominatim:3.7
+    environment:
+      # It's always a good idea to use a small country for testing, so the
+      # import won't take forever. If you want to import another region,
+      # modify `PBF_URL` and `REPLICATION_URL` accordingly. You can find the
+      # different URLs at https://download.geofabrik.de.
+      PBF_URL: https://download.geofabrik.de/europe/malta-latest.osm.pbf
+      REPLICATION_URL: https://download.geofabrik.de/europe/malta-updates/
+      IMPORT_STYLE: extratags
+    ports:
+      - "8080:8080"
+    volumes:
+      - "./lib-php:/usr/local/lib/nominatim/lib-php:ro"
+      - "./lib-sql:/usr/local/lib/nominatim/lib-sql:ro"
+      - "./nominatim:/usr/local/lib/nominatim/lib-python/nominatim:ro"
