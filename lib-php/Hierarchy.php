@@ -20,6 +20,18 @@ class Hierarchy
             ));
         }
 
+        // The regions for the first level below the country are stored separately,
+        // so we have to get those first. Afterwards we can use the OSM IDs to get
+        // all the children.
+        $aRegionsFirstLevel = $this->getRegionsByCountryCode($aPlace['country_code']);
+
+        $aRegions = array_merge(
+            $aRegionsFirstLevel,
+            $this->getRegionsByOsmIds(array_map(function (array $aRegionFirstLevel) {
+                return $aRegionFirstLevel['osm_id'];
+            }, $aRegionsFirstLevel))
+        );
+
         return [
             [
                 'osm_type' => $aPlace['osm_type'],
@@ -33,57 +45,28 @@ class Hierarchy
                     FROM placex
                     WHERE place_id = :placeId
                 ", [':placeId' => $aPlace['place_id']]),
-                'children' => $this->getChildrenRecursively(
-                    $aPlace['osm_id'],
-                    $aPlace['admin_level'] + 1,
-                    $aPlace['country_code'],
-                ),
+                'children' => $this->convertToTree($aRegions),
             ],
         ];
     }
 
-    private function getChildrenRecursively(int $iOsmId, int $iAdminLevel, string $sCountryCode): array
+    private function convertToTree(array $aElements, int $iParentOsmId = null): array
     {
-        // `admin_level=11` is the highest possible value. For more info see
-        // https://wiki.openstreetmap.org/wiki/Tag:boundary%3Dadministrative
-        if ($iAdminLevel > 11) {
-            return [];
-        }
+        $aTree = [];
 
-        // For the immediate children of the country (admin_level=2 is always
-        // the country) we need a special query, because there won't be any
-        // records in `place_addressline`
-        if ($iAdminLevel == 3) {
-            $aResult = $this->getRegionsByCountryCode($sCountryCode);
-        } else {
-            $aResult = $this->getRegionsByOsmIdAndType($iOsmId, $iAdminLevel);
-        }
-
-        $aReturn = [];
-
-        if ($aResult) {
-            // If we got some results, get the children (i.e. the regions with
-            // the next higher `admin_level`) for each result
-            foreach ($aResult as $aResultItem) {
-                $aResultItem['children'] = $this->getChildrenRecursively(
-                    $aResultItem['osm_id'],
-                    $iAdminLevel + 1,
-                    $sCountryCode
-                );
-
-                $aReturn[] = $aResultItem;
+        foreach ($aElements as $aElement) {
+            if ($aElement['parent_osm_id'] == $iParentOsmId) {
+                $aTree[] = [
+                    'osm_type' => $aElement['osm_type'],
+                    'osm_id' => $aElement['osm_id'],
+                    'name' => $aElement['name'],
+                    'indexed_date' => $aElement['indexed_date'],
+                    'children' => $this->convertToTree($aElements, $aElement['osm_id']),
+                ];
             }
-        } else {
-            // If there were no results for the current `admin_level`,
-            // simply continue with the next one
-            $aReturn = $this->getChildrenRecursively(
-                $iOsmId,
-                $iAdminLevel + 1,
-                $sCountryCode
-            );
-        } 
+        }
 
-        return $aReturn;
+        return $aTree;
     }
 
     private function getRegionsByCountryCode(string $sCountryCode): array
@@ -153,39 +136,56 @@ class Hierarchy
         ]);
     }
 
-    private function getRegionsByOsmIdAndType(int $iOsmId, int $iAdminLevel): array
+    private function getRegionsByOsmIds(array $aOsmIds): array
     {
+        $sOsmIdsPlaceholder = implode(',', array_fill(0, count($aOsmIds), '?'));
         $sSQL = "
-            SELECT
-                p2.osm_type,
-                p2.osm_id,
-                COALESCE(
-                    p2.name -> 'int_name',
-                    p2.name -> 'alt_name',
-                    p2.name -> 'name'
-                ) AS name,
-                TO_CHAR(
-                    TO_TIMESTAMP(EXTRACT(epoch FROM p2.indexed_date)),
-                    'YYYY-MM-DD\"T\"HH:MI:SS+00:00'
-                ) AS indexed_date
-            FROM place_addressline AS pa
-            JOIN placex AS p1
-                ON pa.address_place_id = p1.place_id
-            JOIN placex AS p2
-                ON pa.place_id = p2.place_id
-            WHERE p1.osm_id = :osmId
-            AND p1.osm_type = 'R'
-            AND pa.isaddress
-            AND pa.fromarea
-            AND p2.admin_level = :adminLevel
-            AND p2.class = 'boundary'
-            AND p2.type = 'administrative'
-            AND p2.osm_type = 'R'
+            SELECT *
+            FROM (
+                SELECT DISTINCT ON (descendant.admin_level, descendant.osm_id, descendant.osm_type)
+                    descendant.osm_type,
+                    descendant.osm_id,
+                    COALESCE(
+                        descendant.name -> 'int_name',
+                        descendant.name -> 'alt_name',
+                        descendant.name -> 'name'
+                    ) AS name,
+                    TO_CHAR(
+                        TO_TIMESTAMP(EXTRACT(epoch FROM descendant.indexed_date)),
+                        'YYYY-MM-DD\"T\"HH:MI:SS+00:00'
+                    ) AS indexed_date,
+                    ancestor.osm_id as parent_osm_id,
+                    ancestor.admin_level as parent_admin_level
+
+                FROM placex AS base_region
+                LEFT JOIN place_addressline AS base_region_descendants
+                    ON (base_region_descendants.address_place_id = base_region.place_id)
+                LEFT JOIN placex AS descendant
+                    ON (base_region_descendants.place_id = descendant.place_id)
+                LEFT JOIN place_addressline as ancestors
+                    ON (base_region_descendants.place_id = ancestors.place_id)
+                LEFT JOIN placex as ancestor
+                    ON (ancestor.place_id = ancestors.address_place_id)
+
+                WHERE base_region.osm_id IN ($sOsmIdsPlaceholder)
+                AND base_region.osm_type = 'R'
+                AND base_region_descendants.isaddress
+                AND base_region_descendants.fromarea
+                AND descendant.class = 'boundary'
+                AND descendant.type = 'administrative'
+                AND descendant.osm_type = 'R'
+
+                ORDER BY
+                    descendant.admin_level,
+                    descendant.osm_id,
+                    descendant.osm_type,
+                    ancestor.admin_level DESC
+            ) AS x
+            ORDER BY
+                parent_admin_level,
+                parent_osm_id
         ";
 
-        return $this->oDB->getAll($sSQL, [
-            ':osmId' => $iOsmId,
-            ':adminLevel' => $iAdminLevel,
-        ]);
+        return $this->oDB->getAll($sSQL, $aOsmIds);
     }
 }
