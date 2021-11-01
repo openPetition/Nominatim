@@ -20,16 +20,9 @@ class Hierarchy
             ));
         }
 
-        // The regions for the first level below the country are stored separately,
-        // so we have to get those first. Afterwards we can use the OSM IDs to get
-        // all the children.
-        $aRegionsFirstLevel = $this->getRegionsByCountryCode($aPlace['country_code']);
-
         $aRegions = array_merge(
-            $aRegionsFirstLevel,
-            $this->getRegionsByOsmIds(array_map(function (array $aRegionFirstLevel) {
-                return $aRegionFirstLevel['osm_id'];
-            }, $aRegionsFirstLevel))
+            $this->getFirstLevelRegionsByCountryCode($aPlace['country_code']),
+            $this->getRegionsByCountryCode($aPlace['country_code'])
         );
 
         return [
@@ -69,7 +62,7 @@ class Hierarchy
         return $aTree;
     }
 
-    private function getRegionsByCountryCode(string $sCountryCode): array
+    private function getFirstLevelRegionsByCountryCode(string $sCountryCode): array
     {
         $sSQL = "
             SELECT
@@ -136,56 +129,60 @@ class Hierarchy
         ]);
     }
 
-    private function getRegionsByOsmIds(array $aOsmIds): array
+    private function getRegionsByCountryCode(string $sCountryCode): array
     {
-        $sOsmIdsPlaceholder = implode(',', array_fill(0, count($aOsmIds), '?'));
         $sSQL = "
-            SELECT *
-            FROM (
-                SELECT DISTINCT ON (descendant.admin_level, descendant.osm_id, descendant.osm_type)
-                    descendant.osm_type,
-                    descendant.osm_id,
-                    COALESCE(
-                        descendant.name -> 'int_name',
-                        descendant.name -> 'alt_name',
-                        descendant.name -> 'name'
-                    ) AS name,
-                    TO_CHAR(
-                        TO_TIMESTAMP(EXTRACT(epoch FROM descendant.indexed_date)),
-                        'YYYY-MM-DD\"T\"HH:MI:SS+00:00'
-                    ) AS indexed_date,
-                    ancestor.osm_id as parent_osm_id,
-                    ancestor.admin_level as parent_admin_level
-
-                FROM placex AS base_region
-                LEFT JOIN place_addressline AS base_region_descendants
-                    ON (base_region_descendants.address_place_id = base_region.place_id)
-                LEFT JOIN placex AS descendant
-                    ON (base_region_descendants.place_id = descendant.place_id)
-                LEFT JOIN place_addressline as ancestors
-                    ON (base_region_descendants.place_id = ancestors.place_id)
-                LEFT JOIN placex as ancestor
-                    ON (ancestor.place_id = ancestors.address_place_id)
-
-                WHERE base_region.osm_id IN ($sOsmIdsPlaceholder)
-                AND base_region.osm_type = 'R'
-                AND base_region_descendants.isaddress
-                AND base_region_descendants.fromarea
-                AND descendant.class = 'boundary'
-                AND descendant.type = 'administrative'
-                AND descendant.osm_type = 'R'
-
-                ORDER BY
-                    descendant.admin_level,
-                    descendant.osm_id,
-                    descendant.osm_type,
-                    ancestor.admin_level DESC
-            ) AS x
-            ORDER BY
-                parent_admin_level,
-                parent_osm_id
+            WITH links AS (
+              SELECT
+                p.place_id,
+                p.admin_level,
+                (
+                  SELECT pa.address_place_id
+                  FROM place_addressline pa
+                  INNER JOIN placex pi
+                    ON (pa.address_place_id = pi.place_id)
+                  WHERE pa.place_id = p.place_id
+                  AND admin_level <= 11
+                  ORDER BY admin_level DESC
+                  LIMIT 1
+                ) AS parent_place_id
+              FROM placex p
+              WHERE p.class = 'boundary'
+                AND p.type = 'administrative'
+                AND p.osm_type = 'R'
+                AND p.country_code = :countryCode
+              ORDER BY p.admin_level DESC
+            )
+            SELECT
+              region.osm_type,
+              region.osm_id,
+              COALESCE(
+                region.name -> 'int_name',
+                region.name -> 'alt_name',
+                region.name -> 'name'
+              ) AS name,
+              TO_CHAR(
+                TO_TIMESTAMP(EXTRACT(epoch FROM region.indexed_date)),
+                'YYYY-MM-DD\"T\"HH:MI:SS+00:00'
+              ) AS indexed_date,
+              parent.osm_id AS parent_osm_id,
+              parent.admin_level AS parent_admin_level
+            FROM links
+            INNER JOIN placex region
+              ON (links.place_id = region.place_id)
+            LEFT JOIN placex parent
+              ON (links.parent_place_id = parent.place_id)
+            -- According to https://wiki.openstreetmap.org/wiki/Tag:boundary%3Dadministrative
+            -- 11 should be the highest possible level. Some things, like
+            -- postcodes, have a higher admin_level, but we want to ignore
+            -- those.
+            WHERE region.admin_level <= 11
+            AND parent.osm_id IS NOT NULL
+            ORDER BY region.admin_level, parent.osm_id
         ";
 
-        return $this->oDB->getAll($sSQL, $aOsmIds);
+        return $this->oDB->getAll($sSQL, [
+            ':countryCode' => $sCountryCode,
+        ]);
     }
 }
