@@ -40,6 +40,12 @@ CREATE INDEX IF NOT EXISTS idx_osmline_parent_osm_id
 CREATE INDEX IF NOT EXISTS idx_postcode_postcode
   ON location_postcode USING BTREE (postcode) {{db.tablespace.search_index}};
 
+CREATE INDEX {{sql.if_index_not_exists}} idx_placex_relation_hierarchy
+  ON placex (class, type, osm_type, country_code)
+  WHERE class = 'boundary'
+    AND type = 'administrative'
+    AND osm_type = 'R';
+
 {% if drop %}
 ---
   DROP INDEX IF EXISTS idx_placex_geometry_address_area_candidates;

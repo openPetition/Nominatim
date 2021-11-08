@@ -20,6 +20,11 @@ class Hierarchy
             ));
         }
 
+        $aRegions = array_merge(
+            $this->getFirstLevelRegionsByCountryCode($aPlace['country_code']),
+            $this->getRegionsByCountryCode($aPlace['country_code'])
+        );
+
         return [
             [
                 'osm_type' => $aPlace['osm_type'],
@@ -33,60 +38,31 @@ class Hierarchy
                     FROM placex
                     WHERE place_id = :placeId
                 ", [':placeId' => $aPlace['place_id']]),
-                'children' => $this->getChildrenRecursively(
-                    $aPlace['osm_id'],
-                    $aPlace['admin_level'] + 1,
-                    $aPlace['country_code'],
-                ),
+                'children' => $this->convertToTree($aRegions),
             ],
         ];
     }
 
-    private function getChildrenRecursively(int $iOsmId, int $iAdminLevel, string $sCountryCode): array
+    private function convertToTree(array $aElements, int $iParentOsmId = null): array
     {
-        // `admin_level=11` is the highest possible value. For more info see
-        // https://wiki.openstreetmap.org/wiki/Tag:boundary%3Dadministrative
-        if ($iAdminLevel > 11) {
-            return [];
-        }
+        $aTree = [];
 
-        // For the immediate children of the country (admin_level=2 is always
-        // the country) we need a special query, because there won't be any
-        // records in `place_addressline`
-        if ($iAdminLevel == 3) {
-            $aResult = $this->getRegionsByCountryCode($sCountryCode);
-        } else {
-            $aResult = $this->getRegionsByOsmIdAndType($iOsmId, $iAdminLevel);
-        }
-
-        $aReturn = [];
-
-        if ($aResult) {
-            // If we got some results, get the children (i.e. the regions with
-            // the next higher `admin_level`) for each result
-            foreach ($aResult as $aResultItem) {
-                $aResultItem['children'] = $this->getChildrenRecursively(
-                    $aResultItem['osm_id'],
-                    $iAdminLevel + 1,
-                    $sCountryCode
-                );
-
-                $aReturn[] = $aResultItem;
+        foreach ($aElements as $aElement) {
+            if ($aElement['parent_osm_id'] == $iParentOsmId) {
+                $aTree[] = [
+                    'osm_type' => $aElement['osm_type'],
+                    'osm_id' => $aElement['osm_id'],
+                    'name' => $aElement['name'],
+                    'indexed_date' => $aElement['indexed_date'],
+                    'children' => $this->convertToTree($aElements, $aElement['osm_id']),
+                ];
             }
-        } else {
-            // If there were no results for the current `admin_level`,
-            // simply continue with the next one
-            $aReturn = $this->getChildrenRecursively(
-                $iOsmId,
-                $iAdminLevel + 1,
-                $sCountryCode
-            );
-        } 
+        }
 
-        return $aReturn;
+        return $aTree;
     }
 
-    private function getRegionsByCountryCode(string $sCountryCode): array
+    private function getFirstLevelRegionsByCountryCode(string $sCountryCode): array
     {
         $sSQL = "
             SELECT
@@ -153,39 +129,60 @@ class Hierarchy
         ]);
     }
 
-    private function getRegionsByOsmIdAndType(int $iOsmId, int $iAdminLevel): array
+    private function getRegionsByCountryCode(string $sCountryCode): array
     {
         $sSQL = "
+            WITH links AS (
+              SELECT
+                p.place_id,
+                p.admin_level,
+                (
+                  SELECT pa.address_place_id
+                  FROM place_addressline pa
+                  INNER JOIN placex pi
+                    ON (pa.address_place_id = pi.place_id)
+                  WHERE pa.place_id = p.place_id
+                  AND admin_level <= 11
+                  ORDER BY admin_level DESC
+                  LIMIT 1
+                ) AS parent_place_id
+              FROM placex p
+              WHERE p.class = 'boundary'
+                AND p.type = 'administrative'
+                AND p.osm_type = 'R'
+                AND p.country_code = :countryCode
+              ORDER BY p.admin_level DESC
+            )
             SELECT
-                p2.osm_type,
-                p2.osm_id,
-                COALESCE(
-                    p2.name -> 'int_name',
-                    p2.name -> 'alt_name',
-                    p2.name -> 'name'
-                ) AS name,
-                TO_CHAR(
-                    TO_TIMESTAMP(EXTRACT(epoch FROM p2.indexed_date)),
-                    'YYYY-MM-DD\"T\"HH:MI:SS+00:00'
-                ) AS indexed_date
-            FROM place_addressline AS pa
-            JOIN placex AS p1
-                ON pa.address_place_id = p1.place_id
-            JOIN placex AS p2
-                ON pa.place_id = p2.place_id
-            WHERE p1.osm_id = :osmId
-            AND p1.osm_type = 'R'
-            AND pa.isaddress
-            AND pa.fromarea
-            AND p2.admin_level = :adminLevel
-            AND p2.class = 'boundary'
-            AND p2.type = 'administrative'
-            AND p2.osm_type = 'R'
+              region.osm_type,
+              region.osm_id,
+              COALESCE(
+                region.name -> 'int_name',
+                region.name -> 'alt_name',
+                region.name -> 'name'
+              ) AS name,
+              TO_CHAR(
+                TO_TIMESTAMP(EXTRACT(epoch FROM region.indexed_date)),
+                'YYYY-MM-DD\"T\"HH:MI:SS+00:00'
+              ) AS indexed_date,
+              parent.osm_id AS parent_osm_id,
+              parent.admin_level AS parent_admin_level
+            FROM links
+            INNER JOIN placex region
+              ON (links.place_id = region.place_id)
+            LEFT JOIN placex parent
+              ON (links.parent_place_id = parent.place_id)
+            -- According to https://wiki.openstreetmap.org/wiki/Tag:boundary%3Dadministrative
+            -- 11 should be the highest possible level. Some things, like
+            -- postcodes, have a higher admin_level, but we want to ignore
+            -- those.
+            WHERE region.admin_level <= 11
+            AND parent.osm_id IS NOT NULL
+            ORDER BY region.admin_level, parent.osm_id
         ";
 
         return $this->oDB->getAll($sSQL, [
-            ':osmId' => $iOsmId,
-            ':adminLevel' => $iAdminLevel,
+            ':countryCode' => $sCountryCode,
         ]);
     }
 }
