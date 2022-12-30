@@ -76,7 +76,8 @@ class Hierarchy
                 TO_CHAR(
                     TO_TIMESTAMP(EXTRACT(epoch FROM p2.indexed_date)),
                     'YYYY-MM-DD\"T\"HH:MI:SS+00:00'
-                ) AS indexed_date
+                ) AS indexed_date,
+                NULL as parent_osm_id
             FROM placex AS p2
             WHERE p2.country_code = :countryCode
             AND p2.class = 'boundary'
