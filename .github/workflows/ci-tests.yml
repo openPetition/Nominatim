@@ -69,8 +69,10 @@ jobs:
               uses: shivammathur/setup-php@v2
               with:
                   php-version: ${{ matrix.php }}
-                  tools: phpunit, phpcs, composer
+                  tools: phpunit:9, phpcs, composer
                   ini-values: opcache.jit=disable
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - uses: actions/setup-python@v4
               with:
@@ -100,18 +102,22 @@ jobs:
 
             - name: Install latest pylint/mypy
               run: pip3 install -U pylint mypy types-PyYAML types-jinja2 types-psycopg2 types-psutil types-requests typing-extensions
+              if: matrix.ubuntu == 22
 
             - name: PHP linting
               run: phpcs --report-width=120 .
               working-directory: Nominatim
+              if: matrix.ubuntu == 22
 
             - name: Python linting
               run: pylint nominatim
               working-directory: Nominatim
+              if: matrix.ubuntu == 22
 
             - name: Python static typechecking
               run: mypy --strict nominatim
               working-directory: Nominatim
+              if: matrix.ubuntu == 22
 
 
             - name: PHP unit tests

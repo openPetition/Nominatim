@@ -20,7 +20,7 @@ project(nominatim)
 
 set(NOMINATIM_VERSION_MAJOR 4)
 set(NOMINATIM_VERSION_MINOR 2)
-set(NOMINATIM_VERSION_PATCH 0)
+set(NOMINATIM_VERSION_PATCH 3)
 
 set(NOMINATIM_VERSION "${NOMINATIM_VERSION_MAJOR}.${NOMINATIM_VERSION_MINOR}.${NOMINATIM_VERSION_PATCH}")
 
@@ -269,6 +269,12 @@ install(FILES settings/env.defaults
               settings/import-address.style
               settings/import-full.style
               settings/import-extratags.style
+              settings/import-admin.lua
+              settings/import-street.lua
+              settings/import-address.lua
+              settings/import-full.lua
+              settings/import-extratags.lua
+              settings/flex-base.lua
               settings/icu_tokenizer.yaml
               settings/country_settings.yaml
         DESTINATION ${NOMINATIM_CONFIGDIR})
