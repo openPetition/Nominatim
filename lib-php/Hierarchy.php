@@ -97,6 +97,7 @@ class Hierarchy
                 -- these manually.
                 AND p1.admin_level > CASE
                     WHEN p1.country_code = 'mt' THEN 3
+                    WHEN p1.country_code = 'gr' THEN 3
                     ELSE 2
                     END
                 ORDER BY p1.admin_level ASC
